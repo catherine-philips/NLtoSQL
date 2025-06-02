@@ -1,0 +1,15 @@
+pandas==2.2.3
+openpyxl
+gspread==6.2.1
+google-auth==2.38.0
+google-auth-oauthlib==1.2.1
+SQLAlchemy==2.0.38
+langchain_google_genai
+langchain
+langchain-openai
+langchain-community
+openai
+streamlit
+python-dotenv
+requests
+Pillow
