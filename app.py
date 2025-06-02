@@ -144,7 +144,7 @@ def load_into_sqlite(tables):
 def clean_sql_query(text: str) -> str:
     block_pattern = r"```(?:sql|SQL)?\s*(.*?)\s*```"
     text = re.sub(block_pattern, r"\1", text, flags=re.DOTALL)
-    prefix_pattern = r"^(?:SQL\s*Query|SQLQuery|MySQL|SQL)\s*:\s*"
+    prefix_pattern = r"^(?:SQL\s*Query|SQLQuery|MySQL|SQL|SQLite|ite)\s*:\s*"
     text = re.sub(prefix_pattern, "", text, flags=re.IGNORECASE)
     sql_statement_pattern = r"(SELECT.*?;)"
     match = re.search(sql_statement_pattern, text, flags=re.IGNORECASE | re.DOTALL)
