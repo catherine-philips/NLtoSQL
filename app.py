@@ -69,7 +69,7 @@ EXCEL_PATH = "data.xlsx"
 GEMINI_API_KEY =  "AIzaSyB0j0OcI5QJEZC94tRmnsuO0aaA7iMFfXg"
 
 SYSTEM_PROMPT_TEMPLATE = """
-You are a SQLite expert. Given an input question, first create a syntactically correct MySQL query to run, then look at the results of the query and return the answer.
+You are a SQLite expert. Given an input question, first create a syntactically correct SQLite query to run, then look at the results of the query and return the answer.
 Return at most {top_k} results if applicable.
 If the question is about images or list of items. the SQL query must include SELECT File Name, URL FROM [table_name]. 
 Understand the user's intent even if it contains typos, grammar issues, or minor mistakes (e.g., miswritten player names like "moen ali" instead of "moeen ali").
