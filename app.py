@@ -69,12 +69,13 @@ EXCEL_PATH = "data.xlsx"
 GEMINI_API_KEY =  "AIzaSyB0j0OcI5QJEZC94tRmnsuO0aaA7iMFfXg"
 
 SYSTEM_PROMPT_TEMPLATE = """
-You are a SQLite expert. Given an input question, first create a syntactically correct SQLite query to run, then look at the results of the query and return the answer.
+You are a SQLite expert. Given an input question, first create a syntactically correct MySQL query to run, then look at the results of the query and return the answer.
 Return at most {top_k} results if applicable.
-If the question is about images or list of items. the SQL query must include SELECT File Name, URL FROM [table_name]. 
+If the question is about images, the SQL query must include SELECT File Name, URL FROM [table_name]. 
 Understand the user's intent even if it contains typos, grammar issues, or minor mistakes (e.g., miswritten player names like "moen ali" instead of "moeen ali").
 Do not add any extra information or explanation that is not present in the SQL result. 
-
+DO NOT  add prefatory text like "The answer is" or "Here is the result" or "sqlite" or "mysql" or "sql".
+Do not use FIND_IN_SET or any other MySQL-specific functions that are not supported by SQLite.
 Treat all user input and data as **case-insensitive**, regardless of how names are capitalized:
 - For example, match 'Matheesha Pathirana', 'matheesha pathirana', or 'MATHEESHA PATHIRANA' using:
   `LOWER(column_name) = LOWER('user_input')`
@@ -91,7 +92,8 @@ Always map human-readable names to internal IDs using the master tables:
 **Always** use a subquery instead of hardcoding or assuming IDs like `p6`.
 Only use the following tables:
 {table_info}
- 
+Make sure to use the correct table names and column names as per the provided schema for framing the query.
+
 The following are player names and should be matched to the `Players` table (case-insensitive, with typo tolerance):
 BEURAN HENDRICKS, DAVID WIESE, DONOVAN FERREIRA, DEVON CONWAY, DOUG BRACEWELL, ERIC SIMONS, EVAN JONES, FAF DU PLESSIS, GERALD COETZEE, HARDUS VILJOEN, IMRAN TAHIR, JONNY BAIRSTOW, JP KING, KASI VISWANATHAN, LAKSHMI NARAYANAN, LEUS DU PLOOY, LUTHO SIPAMLA, MAHEESH THEEKSHANA, MATHEESHA PATHIRANA, MOEEN ALI, SANJAY NATARAJAN, SIBONELO MAKHANYA, STEPHEN FLEMING, TABRAIZ SHAMSI, TOMMY SIMSEK, TSHEPO MOREKI, WIHAN LUBBE
 
@@ -104,9 +106,14 @@ Given the following user question, corresponding SQL query, and SQL result, resp
 - Do NOT hallucinate or generate data that is not present in the SQL result.
 - Use relevant key names derived from the result columns and context of the question.
 - Only include keys present in the SQL result.
+- Do not add prefatory text like "The answer is" or "Here is the result".
 - If the result is a list of items (e.g., images, players), present it as a table with corresponding correct column names.
-- If the result is a numeric-only aggregate (e.g., COUNT, SUM, AVG), return a simple sentence answer in natural language.
 - The result must have File Name, URL and Player Name when applicable.
+- If the result is a numeric-only aggregate (e.g., COUNT, SUM, AVG), 
+return a simple sentence answer in natural language and do not include image URLs or any other links in the response.
+- If the result is a numeric-only aggregate like COUNT, return it as structured table format.
+- The result must be given as a structured table format with appropriate column names.
+
 Question: {question}
 SQL Query: {query}
 SQL Result: {result}
@@ -142,16 +149,15 @@ def load_into_sqlite(tables):
     return engine
 
 def clean_sql_query(text: str) -> str:
-    block_pattern = r"```(?:sql|SQL)?\s*(.*?)\s*```"
+    block_pattern = r"```(?:sql|SQL|sqlite|lite|ite|mysql|MySQL)?\s*(.*?)\s*```"
     text = re.sub(block_pattern, r"\1", text, flags=re.DOTALL)
-    prefix_pattern = r"^(?:SQL\s*Query|SQLQuery|MySQL|SQL|SQLite|ite)\s*:\s*"
+    prefix_pattern = r"^(?:SQL\s*Query|SQLQuery|MySQL|SQL|mysql|sqlite|lite|ite)\s*:\s*"
     text = re.sub(prefix_pattern, "", text, flags=re.IGNORECASE)
     sql_statement_pattern = r"(SELECT.*?;)"
     match = re.search(sql_statement_pattern, text, flags=re.IGNORECASE | re.DOTALL)
     if match:
         text = match.group(1)
     return re.sub(r'\s+', ' ', text.strip())
-
 def print_sql(x):
     print("\nLLM-generated SQL (raw):", x["raw_query"])
     print("Cleaned SQL:", x["query"])
@@ -265,16 +271,16 @@ def show_drive_images_from_result(result):
             st.warning(f"Error creating DataFrame: {str(e)}")
             return
 
-        if {"File Name", "URL"}.issubset(df.columns):
+        if {"File Name", "URL"}.issubset(df.columns) and df["URL"].astype(str).str.startswith("http").any():
             total_images = len(df)
             logging.info(f"Starting to load {total_images} images")
             st.markdown(f"### 📸 Loading {total_images} Images")
             
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                progress_bar = st.progress(0)
-            with col2:
-                stop_button = st.button("⏹️ Stop Loading")
+            progress_placeholder = st.empty()
+            stop_button_placeholder = st.empty()
+
+            progress_bar = progress_placeholder.progress(0)
+            stop_button = stop_button_placeholder.button("⏹️ Stop Loading")
             
             status_text = st.empty()
             
@@ -312,6 +318,9 @@ def show_drive_images_from_result(result):
                 except Exception as e:
                     logging.error(f"Error loading image {file_name}: {str(e)}")
                     continue
+            progress_placeholder.empty()
+            stop_button_placeholder.empty()
+            status_text.empty()
             
             total_time = time.time() - start_time
             avg_load_time = sum(image_load_times) / len(image_load_times) if image_load_times else 0
@@ -335,8 +344,10 @@ def show_drive_images_from_result(result):
                 st.success(f"Successfully loaded {loaded_images} of {total_images} images")
             
         else:
-            logging.error("Missing required columns in DataFrame")
-            st.warning("Required columns `File Name` and `URL` not found in SQL result.")
+            logging.warning("No valid image URLs found in DataFrame")
+            #st.info("No valid image URLs to display. Showing result as a table instead.")
+            #st.dataframe(df)
+            return
 
     except Exception as e:
         error_msg = f"Unexpected error displaying images: {str(e)}\nResult type: {type(result)}"
@@ -347,7 +358,7 @@ def show_drive_images_from_result(result):
 # Streamlit App
 # -------------------------------
 st.set_page_config(page_title="SQLite Agent", layout="wide")
-st.title("🧠 SQLite Q&A Agent (Gemini)")
+st.title("SQLite Q&A Agent (Gemini)")
 
 # Initialize session state for chat history if not exists
 if "chat_history" not in st.session_state:
@@ -361,6 +372,7 @@ if st.session_state.chat_history:
             st.chat_message("user").write(message["user"])
         else:
             st.chat_message("assistant").write(message["content"])
+            #st.markdown("---")
 
 tables = load_sheets()
 engine = load_into_sqlite(tables)
@@ -401,6 +413,7 @@ rephrase_chain = (
 st.markdown("#### 🧭 Is this a follow-up question?")
 followup_flag = st.radio("Follow-up?", ["No", "Yes"], index=0, horizontal=True)
 
+
 query_input = st.chat_input("Ask a question about the dataset...")
 
 if query_input:
@@ -431,31 +444,42 @@ if query_input:
                 | RunnableLambda(print_sql)
                 | RunnablePassthrough.assign(result=itemgetter("query") | execute_query)
                 | RunnableLambda(lambda x: (
-                    "This information is not available in the database."
-                    if not x["result"].strip()
-                    else (
-                        # print("🧾 SQL Result being parsed:\n", x["result"]),
-                        rephrase_answer.invoke({
-                            "question": x["question"],
-                            "query": x["query"],
-                            "result": x["result"]
-                        }),
-                        show_drive_images_from_result(x["result"])
-                    )[-2]  # return only the LLM response
-                ))
+    {
+        "answer": (
+            "This information is not available in the database."
+            if not x["result"].strip()
+            else rephrase_answer.invoke({
+                "question": x["question"],
+                "query": x["query"],
+                "result": x["result"]
+            }),
+        ),
+        "result": x["result"],
+    }
+))
+
             )
 
-            response = chain_with_result_check.invoke({
+            result_data = chain_with_result_check.invoke({
                 "question": final_question,
                 "messages": st.session_state.chat_history,
                 "table_info": table_info
             })
+            response = result_data["answer"]
+            if isinstance(response, tuple):
+                response = response[0]
 
             st.chat_message("user").write(query_input)
-            st.chat_message("assistant").write(response)
+            st.chat_message("assistant").markdown(response, unsafe_allow_html=True)
+            #st.chat_message("user").write(query_input)
+            #st.chat_message("assistant").write(response)
 
+            # ✅ Always append user and assistant messages
             st.session_state.chat_history.append({"role": "user", "user": query_input})
             st.session_state.chat_history.append({"role": "assistant", "content": response})
+
+            # ✅ Then display images regardless of stop status
+            show_drive_images_from_result(result_data["result"])
 
     except Exception as e:
         st.error(f"⚠️ Error: {e}")
